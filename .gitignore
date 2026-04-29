@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+next-env.d.ts
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+
+# Build output / generated data
+/etl/output/
+/etl/cache/
+/web/public/data/
+*.parquet
+*.duckdb
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+.cursor/

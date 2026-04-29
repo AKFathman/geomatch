@@ -1,0 +1,32 @@
+[project]
+name = "geomatch-etl"
+version = "0.1.0"
+description = "GeoMatch ETL pipeline — pulls public data sources, builds county-level feature matrix"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas>=2.2",
+    "pyarrow>=15.0",
+    "requests>=2.32",
+    "python-dotenv>=1.0",
+    "tenacity>=9.0",
+    "tqdm>=4.66",
+    "numpy>=1.26",
+    "scipy>=1.13",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.6",
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

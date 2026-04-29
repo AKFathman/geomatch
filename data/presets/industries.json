@@ -1,0 +1,46 @@
+{
+  "$schema": "../schemas/industry_preset.schema.json",
+  "version": "0.1.0",
+  "notes": "Curated weights per industry. Weights apply to the metric base name; the matcher uses level + slope + yoy + vol per metric and divides each metric's weight evenly across its derived features. Custom user overrides replace the entire weights map.",
+  "presets": {
+    "cpg_grocery": {
+      "label": "CPG / Grocery",
+      "weights": {
+        "median_household_income": 0.20,
+        "avg_household_size": 0.15,
+        "population_total": 0.10,
+        "median_age": 0.10,
+        "employment_count": 0.10,
+        "per_capita_personal_income": 0.15,
+        "zhvi_home_value": 0.10,
+        "unemployment_rate": 0.10
+      }
+    },
+    "streaming_svod": {
+      "label": "Streaming / SVOD",
+      "weights": {
+        "median_household_income": 0.15,
+        "median_age": 0.15,
+        "bachelors_plus_share": 0.20,
+        "avg_household_size": 0.10,
+        "population_total": 0.10,
+        "zori_rent_index": 0.10,
+        "per_capita_personal_income": 0.10,
+        "unemployment_rate": 0.10
+      }
+    },
+    "travel_hospitality": {
+      "label": "Travel / Hospitality",
+      "weights": {
+        "per_capita_personal_income": 0.20,
+        "median_household_income": 0.15,
+        "median_age": 0.15,
+        "unemployment_rate": 0.15,
+        "bachelors_plus_share": 0.10,
+        "zhvi_home_value": 0.10,
+        "population_total": 0.10,
+        "labor_force": 0.05
+      }
+    }
+  }
+}

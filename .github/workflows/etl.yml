@@ -1,0 +1,69 @@
+name: ETL Nightly
+
+on:
+  schedule:
+    # 06:00 UTC = 02:00 ET — runs after most overnight data refreshes
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+  push:
+    paths:
+      - "etl/**"
+      - ".github/workflows/etl.yml"
+
+jobs:
+  etl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: etl
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e .
+
+      - name: Run ETL
+        env:
+          CENSUS_API_KEY: ${{ secrets.CENSUS_API_KEY }}
+          BLS_API_KEY: ${{ secrets.BLS_API_KEY }}
+          BEA_API_KEY: ${{ secrets.BEA_API_KEY }}
+          FBI_API_KEY: ${{ secrets.FBI_API_KEY }}
+        run: python pipeline.py --verbose
+
+      - name: Upload artifact (manual inspection)
+        uses: actions/upload-artifact@v4
+        with:
+          name: feature-matrix
+          path: etl/output/
+          retention-days: 14
+
+      - name: Copy outputs into web/public/data
+        run: |
+          mkdir -p ../web/public/data
+          cp etl/output/feature_matrix.parquet ../web/public/data/
+          cp etl/output/manifest.json ../web/public/data/
+
+      - name: Commit refreshed data
+        # Only run on schedule/dispatch — skip on push to avoid commit loops
+        if: github.event_name != 'push'
+        run: |
+          cd ..
+          git config user.name "geomatch-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add web/public/data/feature_matrix.parquet web/public/data/manifest.json
+          if git diff --cached --quiet; then
+            echo "no data changes"
+          else
+            git commit -m "data: nightly refresh $(date -u +%Y-%m-%d)"
+            git push
+          fi
+          # Pushing main triggers Vercel deploy automatically.
