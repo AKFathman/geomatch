@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "geomatch-etl"
 version = "0.1.0"
@@ -20,6 +24,12 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=5.0",
 ]
+
+[tool.setuptools]
+# We're not actually distributing this — just listing the local packages so
+# `pip install -e .` works. Without this, setuptools refuses to auto-discover
+# because of multiple top-level packages.
+packages = ["sources", "features"]
 
 [tool.ruff]
 line-length = 100
