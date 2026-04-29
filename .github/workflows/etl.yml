@@ -5,10 +5,18 @@ on:
     # 06:00 UTC = 02:00 ET — runs after most overnight data refreshes
     - cron: "0 6 * * *"
   workflow_dispatch:
+    inputs:
+      skip:
+        description: "Space-separated source names to skip (e.g. 'laus zillow' for a quick smoke test)"
+        required: false
+        default: ""
   push:
     paths:
       - "etl/**"
       - ".github/workflows/etl.yml"
+
+permissions:
+  contents: write  # needed to commit refreshed parquet back to main
 
 jobs:
   etl:
@@ -37,7 +45,12 @@ jobs:
           BLS_API_KEY: ${{ secrets.BLS_API_KEY }}
           BEA_API_KEY: ${{ secrets.BEA_API_KEY }}
           FBI_API_KEY: ${{ secrets.FBI_API_KEY }}
-        run: python pipeline.py --verbose
+        run: |
+          if [ -n "${{ inputs.skip }}" ]; then
+            python pipeline.py --verbose --skip ${{ inputs.skip }}
+          else
+            python pipeline.py --verbose
+          fi
 
       - name: Upload artifact (manual inspection)
         uses: actions/upload-artifact@v4
