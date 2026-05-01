@@ -2,15 +2,20 @@
 
 API docs: https://www.census.gov/data/developers/data-sets/acs-5year.html
 Requires CENSUS_API_KEY.
+
+Side effect: writes a `geo_metadata.json` file (fips → name + state + population)
+into the cache dir, used by the frontend to render readable labels.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 
 import pandas as pd
 
-from .base import get_json, require_env, write_long
+from .base import CACHE_DIR, get_json, require_env, write_long
 
 log = logging.getLogger(__name__)
 
@@ -49,11 +54,22 @@ ACS_VARS: dict[str, str] = {
 YEARS = list(range(2018, 2023))  # 2022 5-year is most recent stable as of 2026
 
 
+def _write_geo_metadata(latest_records: dict[str, dict]) -> Path:
+    """Emit geo_metadata.json keyed by fips. Used by the frontend."""
+    out = CACHE_DIR.parent / "output" / "geo_metadata.json"
+    out.parent.mkdir(exist_ok=True)
+    out.write_text(json.dumps(latest_records, indent=0, sort_keys=True))
+    log.info("wrote geo metadata for %d counties to %s", len(latest_records), out)
+    return out
+
+
 def fetch() -> pd.DataFrame:
     """Pull ACS 5-year data for all US counties across YEARS."""
     api_key = require_env("CENSUS_API_KEY")
     var_codes = ",".join(ACS_VARS.keys())
     rows: list[dict] = []
+    # geo metadata uses the latest year's NAME and population
+    latest_geo: dict[str, dict] = {}
 
     for year in YEARS:
         url = f"https://api.census.gov/data/{year}/acs/acs5"
@@ -66,8 +82,24 @@ def fetch() -> pd.DataFrame:
         data = get_json(url, params=params)
         header, *records = data
         idx = {col: i for i, col in enumerate(header)}
+        is_latest_year = year == max(YEARS)
         for rec in records:
             fips = rec[idx["state"]] + rec[idx["county"]]
+            if is_latest_year:
+                # NAME format: "Autauga County, Alabama"
+                full_name = rec[idx["NAME"]]
+                county_name, _, state_name = full_name.partition(", ")
+                pop_raw = rec[idx["B01003_001E"]]
+                try:
+                    pop = int(float(pop_raw)) if pop_raw not in (None, "", "-") else None
+                except (ValueError, TypeError):
+                    pop = None
+                latest_geo[fips] = {
+                    "fips": fips,
+                    "name": county_name,
+                    "state": state_name,
+                    "population": pop,
+                }
             for code, metric in ACS_VARS.items():
                 raw = rec[idx[code]]
                 if raw in (None, "", "-"):
@@ -85,6 +117,8 @@ def fetch() -> pd.DataFrame:
                         "value": val,
                     }
                 )
+
+    _write_geo_metadata(latest_geo)
 
     df = pd.DataFrame(rows)
     # Derive education share (bachelor's+) as a single metric

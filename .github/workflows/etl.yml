@@ -65,6 +65,7 @@ jobs:
           mkdir -p ../web/public/data
           cp output/feature_matrix.parquet ../web/public/data/
           cp output/manifest.json ../web/public/data/
+          cp output/geo_metadata.json ../web/public/data/
           ls -la ../web/public/data/
 
       - name: Commit refreshed data
@@ -74,7 +75,7 @@ jobs:
         run: |
           git config user.name "geomatch-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add web/public/data/feature_matrix.parquet web/public/data/manifest.json
+          git add web/public/data/feature_matrix.parquet web/public/data/manifest.json web/public/data/geo_metadata.json
           if git diff --cached --quiet; then
             echo "no data changes"
           else
