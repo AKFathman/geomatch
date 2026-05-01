@@ -1,9 +1,15 @@
 """BLS Local Area Unemployment Statistics — monthly county unemployment & labor force.
 
 API docs: https://www.bls.gov/developers/api_signature_v2.htm
-Series ID format for county LAUS: LAUCN<5-digit-fips>0000000003 (unemp rate)
-                                  LAUCN<5-digit-fips>0000000006 (labor force)
-                                  LAUCN<5-digit-fips>0000000005 (employment)
+
+LAUS series IDs are 20 chars: "LAUCN" + 5-digit-FIPS + 8 zeros + 2-digit measure
+  e.g. LAUCN281070000000003 = Marshall County MS, unemployment rate
+
+Measure codes:
+  03 = unemployment rate
+  04 = unemployment count
+  05 = employment count
+  06 = labor force
 
 NOTE: BLS API limits 50 series per request, 500 requests/day with key.
 We chunk requests and request only the last 5 years to stay within limits.
@@ -61,7 +67,9 @@ def fetch(county_fips: list[str]) -> pd.DataFrame:
 
     for fips in county_fips:
         for code, metric in LAUS_MEASURES.items():
-            sid = f"LAUCN{fips}0000000{code}"
+            # 20-char format: LAUCN + 5-digit FIPS + 8 zeros + 2-digit measure
+            sid = f"LAUCN{fips}00000000{code}"
+            assert len(sid) == 20, f"malformed LAUS series ID: {sid!r}"
             series_ids.append(sid)
             series_to_meta[sid] = (fips, metric)
 
@@ -99,6 +107,15 @@ def fetch(county_fips: list[str]) -> pd.DataFrame:
                         }
                     )
 
+    if not rows:
+        # BLS silently returns empty `data: []` for malformed series IDs rather
+        # than raising. Make this explicit so future regressions don't crash
+        # later in feature engineering with a confusing error.
+        raise RuntimeError(
+            f"LAUS returned 0 observations for {len(series_ids)} series IDs — "
+            "check series ID format (should be LAUCN+5fips+8zeros+2measure = 20 chars)"
+        )
     df = pd.DataFrame(rows)
+    log.info("LAUS: %d observations across %d series", len(df), len(series_ids))
     write_long(df, "laus")
     return df
