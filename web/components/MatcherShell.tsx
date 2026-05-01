@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
+import { HelpPanel } from "./HelpPanel";
 import { IndustryPicker } from "./IndustryPicker";
 import { ResultsTable } from "./ResultsTable";
 import { TargetPicker } from "./TargetPicker";
@@ -129,6 +130,7 @@ function Matcher({ data }: { data: DataBundle }) {
 
       <main>
         <ResultsTable results={results} geos={data.geos} target={targetGeo} />
+        <HelpPanel />
       </main>
     </div>
   );
