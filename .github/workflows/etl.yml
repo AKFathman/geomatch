@@ -60,16 +60,18 @@ jobs:
           retention-days: 14
 
       - name: Copy outputs into web/public/data
+        # working-directory is etl/ (job default), so output/ paths are relative to that
         run: |
           mkdir -p ../web/public/data
-          cp etl/output/feature_matrix.parquet ../web/public/data/
-          cp etl/output/manifest.json ../web/public/data/
+          cp output/feature_matrix.parquet ../web/public/data/
+          cp output/manifest.json ../web/public/data/
+          ls -la ../web/public/data/
 
       - name: Commit refreshed data
         # Only run on schedule/dispatch — skip on push to avoid commit loops
         if: github.event_name != 'push'
+        working-directory: ${{ github.workspace }}
         run: |
-          cd ..
           git config user.name "geomatch-bot"
           git config user.email "actions@users.noreply.github.com"
           git add web/public/data/feature_matrix.parquet web/public/data/manifest.json
