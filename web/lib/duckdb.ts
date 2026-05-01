@@ -32,8 +32,23 @@ export interface FeatureMatrix {
 
 export async function loadFeatureMatrix(url = "/data/feature_matrix.parquet"): Promise<FeatureMatrix> {
   const db = await getDB();
+  // DuckDB-WASM treats raw paths as local FS — register the URL first so
+  // read_parquet() can fetch over HTTP. Resolve to an absolute URL so
+  // the registration works regardless of the current page path.
+  const absoluteUrl = url.startsWith("http")
+    ? url
+    : new URL(url, window.location.origin).toString();
+  const registeredName = "feature_matrix.parquet";
+  await db.registerFileURL(
+    registeredName,
+    absoluteUrl,
+    duckdb.DuckDBDataProtocol.HTTP,
+    false,
+  );
   const conn = await db.connect();
-  await conn.query(`CREATE OR REPLACE VIEW fm AS SELECT * FROM read_parquet('${url}')`);
+  await conn.query(
+    `CREATE OR REPLACE VIEW fm AS SELECT * FROM read_parquet('${registeredName}')`,
+  );
   const result = await conn.query("SELECT * FROM fm");
   const rows = result.toArray().map((r) => r.toJSON()) as Array<Record<string, unknown>>;
 
