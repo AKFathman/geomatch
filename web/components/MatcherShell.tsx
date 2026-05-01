@@ -129,7 +129,12 @@ function Matcher({ data }: { data: DataBundle }) {
       </aside>
 
       <main>
-        <ResultsTable results={results} geos={data.geos} target={targetGeo} />
+        <ResultsTable
+          results={results}
+          geos={data.geos}
+          target={targetGeo}
+          features={data.features}
+        />
         <HelpPanel />
       </main>
     </div>
