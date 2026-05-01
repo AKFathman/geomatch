@@ -28,12 +28,14 @@ next-env.d.ts
 .env.*.local
 *.pem
 
-# Build output / generated data
+# ETL build artifacts (regenerated each run)
 /etl/output/
 /etl/cache/
-/web/public/data/
-*.parquet
 *.duckdb
+
+# NOTE: web/public/data/ is intentionally NOT ignored — it's how we ship
+# the feature matrix to the frontend. The nightly ETL writes its parquet
+# output into web/public/data/feature_matrix.parquet and commits it.
 
 # OS / editor
 .DS_Store
