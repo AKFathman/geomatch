@@ -1,0 +1,275 @@
+/**
+ * Top-level orchestration for the lift analyzer.
+ *
+ * Inputs:
+ *   - parsed CSV rows (fips, group, outcome, optional exposures/channel)
+ *   - feature matrix (Map<fips, Record<feat, number>>) — z-scored
+ *
+ * Pipeline per channel (or pooled if no channel column):
+ *   1. Filter to rows whose fips is in the feature matrix
+ *   2. Compute outcome variable: outcome/exposures if exposures provided, else outcome
+ *   3. Compute naive lift (Welch's t-test on raw outcomes by group)
+ *   4. Build design matrix X = [1, treatment, ...level features]
+ *   5. Fit ridge regression
+ *   6. Pull treatment coefficient + sandwich SE → CI, p-value
+ *   7. Convert to relative lift using control mean
+ *   8. Selection diagnostic: which features differ most between groups (Welch's t)
+ *
+ * We use only `__level` features (~25) rather than all 100+ to keep the
+ * regression well-conditioned for typical geo-test sizes (50–200 markets).
+ * Slopes/YoY/vol are still in the matcher; here we want the level snapshot.
+ */
+
+import { fitRidge, naiveLift } from "./regression";
+import type { RawRow } from "./csv";
+import { twoSidedP } from "./linalg";
+
+export interface ChannelResult {
+  channel: string | null; // null = pooled
+  n: number;
+  nTest: number;
+  nControl: number;
+  droppedNoFeatures: number; // rows whose fips wasn't in the matrix
+  controlMean: number;
+  // Naive (raw, no covariate adjustment)
+  naiveAbsLift: number;
+  naiveRelLift: number;
+  naiveP: number;
+  // Adjusted (regression with covariates)
+  adjAbsLift: number;
+  adjRelLift: number;
+  adjAbsLiftCi95: [number, number];
+  adjRelLiftCi95: [number, number];
+  adjSe: number;
+  adjP: number;
+  r2: number;
+  // Selection diagnostic
+  selection: SelectionDiag[];
+  // Warnings
+  warnings: string[];
+}
+
+export interface SelectionDiag {
+  feature: string;
+  baseLabel: string;
+  testMeanZ: number;
+  controlMeanZ: number;
+  diff: number; // testMean - controlMean
+  p: number;
+}
+
+export interface AnalysisOutput {
+  channels: ChannelResult[];
+  totalRows: number;
+  matchedRows: number;
+}
+
+const FEATURE_PREFIXES_TO_USE = ["__level"]; // only level z-scores in v2A
+
+function selectFeatures(allFeatureNames: string[]): string[] {
+  return allFeatureNames.filter((f) =>
+    FEATURE_PREFIXES_TO_USE.some((suffix) => f.endsWith(suffix)),
+  );
+}
+
+function meanOf(a: number[]): number {
+  if (!a.length) return 0;
+  let s = 0;
+  for (const v of a) s += v;
+  return s / a.length;
+}
+function varianceOf(a: number[]): number {
+  if (a.length < 2) return 0;
+  const m = meanOf(a);
+  let s = 0;
+  for (const v of a) s += (v - m) ** 2;
+  return s / (a.length - 1);
+}
+
+function selectionDiag(
+  rows: { fips: string; group: "test" | "control" }[],
+  features: Map<string, Record<string, number>>,
+  featureNames: string[],
+  topK = 8,
+): SelectionDiag[] {
+  const out: SelectionDiag[] = [];
+  for (const f of featureNames) {
+    const tVals: number[] = [];
+    const cVals: number[] = [];
+    for (const r of rows) {
+      const vec = features.get(r.fips);
+      if (!vec) continue;
+      const v = vec[f];
+      if (v == null || Number.isNaN(v)) continue;
+      if (r.group === "test") tVals.push(v);
+      else cVals.push(v);
+    }
+    if (tVals.length < 2 || cVals.length < 2) continue;
+    const tm = meanOf(tVals);
+    const cm = meanOf(cVals);
+    const se = Math.sqrt(varianceOf(tVals) / tVals.length + varianceOf(cVals) / cVals.length);
+    const z = se > 0 ? (tm - cm) / se : 0;
+    const p = twoSidedP(z);
+    const base = f.replace(/__(level|slope|yoy|vol|seas)$/, "");
+    out.push({
+      feature: f,
+      baseLabel: base,
+      testMeanZ: tm,
+      controlMeanZ: cm,
+      diff: tm - cm,
+      p,
+    });
+  }
+  return out.sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff)).slice(0, topK);
+}
+
+function analyzeOneChannel(
+  channelRows: RawRow[],
+  features: Map<string, Record<string, number>>,
+  featureNames: string[],
+  channel: string | null,
+): ChannelResult {
+  const usedFeatures = selectFeatures(featureNames);
+  const warnings: string[] = [];
+
+  // Filter to rows with a feature vector
+  const total = channelRows.length;
+  const kept: { fips: string; group: "test" | "control"; y: number; vec: Record<string, number> }[] = [];
+  let dropped = 0;
+  for (const r of channelRows) {
+    const vec = features.get(r.fips);
+    if (!vec) {
+      dropped++;
+      continue;
+    }
+    // Outcome: rate if exposures provided (and >0), else raw count
+    const y =
+      r.exposures != null && r.exposures > 0 ? r.outcome / r.exposures : r.outcome;
+    if (!Number.isFinite(y)) {
+      dropped++;
+      continue;
+    }
+    kept.push({ fips: r.fips, group: r.group, y, vec });
+  }
+
+  const nTest = kept.filter((k) => k.group === "test").length;
+  const nControl = kept.filter((k) => k.group === "control").length;
+  const n = kept.length;
+  const yArr = kept.map((k) => k.y);
+  const tArr = kept.map((k) => (k.group === "test" ? 1 : 0));
+  const controlMean = meanOf(kept.filter((k) => k.group === "control").map((k) => k.y)) || 1e-12;
+
+  // Naive
+  const naive = naiveLift(yArr, tArr);
+
+  // Selection diagnostic — does test/control differ on covariates?
+  const selection = selectionDiag(
+    kept.map((k) => ({ fips: k.fips, group: k.group })),
+    features,
+    usedFeatures,
+  );
+
+  // Quick guards
+  if (nTest < 3 || nControl < 3) {
+    warnings.push(
+      `Very small sample: ${nTest} test + ${nControl} control. Adjusted estimates will be unstable.`,
+    );
+  }
+  if (n < usedFeatures.length + 3) {
+    warnings.push(
+      `Few observations (${n}) vs covariates (${usedFeatures.length}). Results lean heavily on the ridge prior.`,
+    );
+  }
+
+  // Adjusted regression
+  let adjAbsLift = NaN;
+  let adjAbsLiftCi95: [number, number] = [NaN, NaN];
+  let adjSe = NaN;
+  let adjP = NaN;
+  let r2 = NaN;
+  try {
+    // Design matrix: [1, treatment, ...features]
+    const X: number[][] = kept.map((k) => {
+      const row = [1, k.group === "test" ? 1 : 0];
+      for (const f of usedFeatures) {
+        const v = k.vec[f];
+        row.push(Number.isFinite(v) ? v : 0);
+      }
+      return row;
+    });
+    // Choose lambda based on n vs k — heavier shrinkage when overdetermined
+    const lambda = Math.max(0.5, usedFeatures.length / Math.max(1, n) * 5);
+    const fit = fitRidge(X, yArr, lambda);
+    adjAbsLift = fit.coefficients[1]; // treatment is column 1
+    adjAbsLiftCi95 = fit.ci95[1];
+    adjSe = fit.standardErrors[1];
+    adjP = fit.pValues[1];
+    r2 = fit.r2;
+  } catch (e) {
+    warnings.push(
+      `Regression failed: ${e instanceof Error ? e.message : String(e)}. Showing naive estimate only.`,
+    );
+  }
+
+  const adjRelLift = adjAbsLift / controlMean;
+  const adjRelLiftCi95: [number, number] = [
+    adjAbsLiftCi95[0] / controlMean,
+    adjAbsLiftCi95[1] / controlMean,
+  ];
+
+  return {
+    channel,
+    n,
+    nTest,
+    nControl,
+    droppedNoFeatures: dropped,
+    controlMean,
+    naiveAbsLift: naive.absLift,
+    naiveRelLift: naive.relLift,
+    naiveP: naive.p,
+    adjAbsLift,
+    adjRelLift,
+    adjAbsLiftCi95,
+    adjRelLiftCi95,
+    adjSe,
+    adjP,
+    r2,
+    selection,
+    warnings,
+  };
+}
+
+export function analyze(
+  rows: RawRow[],
+  features: Map<string, Record<string, number>>,
+  featureNames: string[],
+): AnalysisOutput {
+  const channels = new Set<string>();
+  for (const r of rows) if (r.channel) channels.add(r.channel);
+
+  const channelResults: ChannelResult[] = [];
+  if (!channels.size) {
+    channelResults.push(analyzeOneChannel(rows, features, featureNames, null));
+  } else {
+    // Pooled first, then per-channel
+    channelResults.push(
+      analyzeOneChannel(
+        rows.map((r) => ({ ...r })),
+        features,
+        featureNames,
+        null,
+      ),
+    );
+    for (const ch of Array.from(channels).sort()) {
+      const subset = rows.filter((r) => r.channel === ch);
+      channelResults.push(analyzeOneChannel(subset, features, featureNames, ch));
+    }
+  }
+
+  const matched = channelResults[0].n;
+  return {
+    channels: channelResults,
+    totalRows: rows.length,
+    matchedRows: matched,
+  };
+}
