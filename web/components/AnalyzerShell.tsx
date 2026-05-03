@@ -100,18 +100,27 @@ function ExplainerPanel() {
           Geo-tests rarely have perfectly matched test/control cells. If your test
           cells skew toward higher-income or denser counties, your raw lift estimate
           mixes up <em>treatment effect</em> with <em>baseline differences</em>. The
-          adjusted estimate isolates the treatment effect using regression on
-          contextual covariates (income, education, age, household size, housing,
-          rent, etc. — z-scored across all US counties).
+          adjusted and doubly-robust estimates isolate the treatment effect using
+          regression on contextual covariates (income, education, age, household
+          size, housing, rent, etc. — z-scored across all US counties).
         </p>
         <p>
-          <strong>The pipeline:</strong> we fit{" "}
+          <strong>Three estimates per channel:</strong>{" "}
+          <em>Naive</em> is the raw test−control comparison.{" "}
+          <em>Adjusted</em> is a single ridge regression{" "}
           <span className="font-mono text-xs">y ~ treatment + features</span> with
-          ridge regularization (so it&apos;s well-behaved when you have many features
-          relative to obs), then read the treatment coefficient and convert to a %
-          using the control mean. Standard errors are heteroskedasticity-robust
-          (Huber-White sandwich), so the CI is honest even when variance scales with
-          population.
+          HC1-corrected sandwich standard errors. <em>Doubly-robust (DR)</em> is the
+          AIPW estimator: separate outcome models per arm + a propensity model for
+          treatment assignment, combined so the result is consistent if{" "}
+          <em>either</em> the outcome OR propensity model is correctly specified.
+        </p>
+        <p>
+          <strong>Which to trust:</strong> when adjusted and DR agree, you&apos;re
+          on solid ground. When they disagree, DR is generally the more robust
+          choice — that&apos;s the case the doubly-robust property protects
+          against. The <em>DR diagnostics</em> panel inside each card shows
+          propensity-score overlap and per-arm outcome model R²; heavy trimming
+          or low propensity R² warn you when DR is straining.
         </p>
         <p>
           <strong>Selection diagnostic:</strong> the table inside each channel card
@@ -120,8 +129,7 @@ function ExplainerPanel() {
           number was misleading.
         </p>
         <p>
-          <strong>What this is not:</strong> doubly-robust (we add inverse-propensity
-          weights in Phase 2B). Difference-in-differences with a pre-period (Phase
+          <strong>What this is not:</strong> Difference-in-differences with a pre-period (Phase
           2C). And it can&apos;t correct for unobserved confounders — if test cells
           got more competitive pressure during the test that we can&apos;t see, no
           adjustment fixes that.
