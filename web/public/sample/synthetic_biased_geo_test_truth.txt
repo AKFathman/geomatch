@@ -1,0 +1,32 @@
+Synthetic biased geo-test — ground truth
+==================================================
+N test cells:    25
+N control cells: 25
+Channels:        meta, tiktok
+Test pool:       counties ranked #1–40 by pop
+Control pool:    counties ranked #41–120 by pop
+
+True multiplicative lifts (test arm only):
+  meta      +15.0%
+  tiktok    +3.0%
+
+Expected analyzer behaviour:
+  - Naive lift (raw): biased UP because test cells are larger / denser /
+    wealthier and have a structurally higher baseline rate.
+  - Adjusted lift: should recover ~15% on meta and ~3% on tiktok with
+    95% CIs containing the truth.
+  - Selection diagnostic: large positive Δ on income, education, population,
+    home values for test vs control.
+
+Test counties (sample of 5):
+  12099  Palm Beach County, Florida  pop=1,494,805
+  39049  Franklin County, Ohio  pop=1,318,149
+  36059  Nassau County, New York  pop=1,389,160
+  36103  Suffolk County, New York  pop=1,524,486
+  48201  Harris County, Texas  pop=4,726,177
+Control counties (sample of 5):
+  47157  Shelby County, Tennessee  pop=926,440
+  40143  Tulsa County, Oklahoma  pop=668,923
+  08041  El Paso County, Colorado  pop=730,323
+  42017  Bucks County, Pennsylvania  pop=645,163
+  08031  Denver County, Colorado  pop=710,800
