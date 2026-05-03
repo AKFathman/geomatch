@@ -39,7 +39,11 @@ def _yoy(series: pd.Series) -> float:
     if len(series) < 2:
         return np.nan
     a, b = series.iloc[-2], series.iloc[-1]
-    return float((b - a) / a) if a not in (0, np.nan) else np.nan
+    # Note: `a not in (0, np.nan)` is broken because `np.nan == np.nan` is False
+    # — that NaN check never fires. Use pd.isna and an explicit zero guard.
+    if pd.isna(a) or pd.isna(b) or a == 0:
+        return np.nan
+    return float((b - a) / a)
 
 
 def _volatility(series: pd.Series) -> float:
@@ -73,10 +77,22 @@ def build_feature_matrix(long: pd.DataFrame) -> pd.DataFrame:
     feats: list[pd.DataFrame] = []
 
     for metric, sub in long.groupby("metric"):
-        is_monthly = sub["period"].str.contains("-").any()
+        # Detect frequency from the period string format.
+        #   "annual"   -> annual
+        #   "YYYY-MM"  -> monthly
+        #   "YYYY-Qn"  -> quarterly  (treated as sub-annual for slope/yoy purposes,
+        #                              but seasonality strength is monthly-only)
+        period_sample = sub["period"].iloc[0] if len(sub) else "annual"
+        is_monthly = (
+            isinstance(period_sample, str)
+            and len(period_sample) >= 7
+            and period_sample[4] == "-"
+            and period_sample[5:7].isdigit()
+        )
+        is_subannual = isinstance(period_sample, str) and "-" in period_sample
 
-        if is_monthly:
-            # Aggregate to annual mean for level/slope/yoy/vol; keep monthly for seasonality
+        if is_subannual:
+            # Aggregate to annual mean for level/slope/yoy/vol regardless of sub-annual freq
             annual = sub.groupby(["fips", "year"])["value"].mean().reset_index()
         else:
             annual = sub[["fips", "year", "value"]].copy()
@@ -114,5 +130,18 @@ def build_feature_matrix(long: pd.DataFrame) -> pd.DataFrame:
         feats.append(out)
 
     matrix = pd.concat(feats, axis=1)
+
+    # Diagnostic: how many derived features are NaN per metric? Surfaces silent
+    # data-quality issues like a metric with insufficient history. We don't drop
+    # — the frontend defends against NaN — but we log so it's visible in CI.
+    nan_pct = matrix.isna().mean().sort_values(ascending=False)
+    high_nan = nan_pct[nan_pct > 0.20]
+    if len(high_nan):
+        log.warning(
+            "%d feature columns are >20%% NaN — likely insufficient history or partial coverage:\n%s",
+            len(high_nan),
+            high_nan.head(20).to_string(),
+        )
+
     log.info("feature matrix: %d counties × %d features", *matrix.shape)
     return matrix

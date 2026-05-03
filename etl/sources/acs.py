@@ -126,14 +126,16 @@ def fetch() -> pd.DataFrame:
         ["edu_total_25plus", "edu_bachelors", "edu_masters",
          "edu_professional", "edu_doctorate"]
     )].pivot_table(index=["fips", "year", "period"], columns="metric", values="value").reset_index()
-    edu["bachelors_plus_share"] = (
-        edu[["edu_bachelors", "edu_masters", "edu_professional", "edu_doctorate"]].sum(axis=1)
-        / edu["edu_total_25plus"]
-    )
+    bachelors_sum = edu[["edu_bachelors", "edu_masters", "edu_professional",
+                          "edu_doctorate"]].sum(axis=1)
+    # Guard against zero-denominator (suppressed-data counties); inf/NaN both
+    # propagate to the feature matrix and confuse the regression downstream.
+    edu["bachelors_plus_share"] = bachelors_sum / edu["edu_total_25plus"].replace(0, pd.NA)
     derived = edu[["fips", "year", "period", "bachelors_plus_share"]].rename(
         columns={"bachelors_plus_share": "value"}
-    )
+    ).dropna(subset=["value"])
     derived["metric"] = "bachelors_plus_share"
     df = pd.concat([df, derived[["fips", "metric", "year", "period", "value"]]], ignore_index=True)
 
-    return write_long(df, "acs") and df  # type: ignore[return-value]
+    write_long(df, "acs")
+    return df

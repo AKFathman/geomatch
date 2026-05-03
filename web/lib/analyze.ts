@@ -152,12 +152,31 @@ function analyzeOneChannel(
     kept.push({ fips: r.fips, group: r.group, y, vec });
   }
 
-  const nTest = kept.filter((k) => k.group === "test").length;
-  const nControl = kept.filter((k) => k.group === "control").length;
+  // Single pass over kept[] for all of: nTest, nControl, yArr, tArr, controlMean,
+  // and a flag for whether we observed a true-zero control mean.
   const n = kept.length;
-  const yArr = kept.map((k) => k.y);
-  const tArr = kept.map((k) => (k.group === "test" ? 1 : 0));
-  const controlMean = meanOf(kept.filter((k) => k.group === "control").map((k) => k.y)) || 1e-12;
+  const yArr: number[] = new Array(n);
+  const tArr: number[] = new Array(n);
+  let nTest = 0;
+  let nControl = 0;
+  let controlSum = 0;
+  for (let i = 0; i < n; i++) {
+    const r = kept[i];
+    yArr[i] = r.y;
+    if (r.group === "test") {
+      tArr[i] = 1;
+      nTest++;
+    } else {
+      tArr[i] = 0;
+      nControl++;
+      controlSum += r.y;
+    }
+  }
+  const controlMeanRaw = nControl > 0 ? controlSum / nControl : NaN;
+  // If the control mean is zero (or non-finite), relative lift is undefined —
+  // do NOT silently substitute 1e-12 (that produces astronomical % numbers).
+  // Downstream rendering treats NaN as "—".
+  const controlMean = Number.isFinite(controlMeanRaw) && controlMeanRaw !== 0 ? controlMeanRaw : NaN;
 
   // Naive
   const naive = naiveLift(yArr, tArr);
@@ -197,25 +216,43 @@ function analyzeOneChannel(
       }
       return row;
     });
-    // Choose lambda based on n vs k — heavier shrinkage when overdetermined
-    const lambda = Math.max(0.5, usedFeatures.length / Math.max(1, n) * 5);
+    // Choose lambda based on n vs k — heavier shrinkage when overdetermined.
+    // Floor of 0.5 protects against pathological well-conditioned cases.
+    const lambda = Math.max(0.5, (usedFeatures.length / Math.max(1, n)) * 5);
     const fit = fitRidge(X, yArr, lambda);
     adjAbsLift = fit.coefficients[1]; // treatment is column 1
     adjAbsLiftCi95 = fit.ci95[1];
     adjSe = fit.standardErrors[1];
     adjP = fit.pValues[1];
     r2 = fit.r2;
+    // Surface fit diagnostics so the UI can disclose them
+    if (!fit.hc1Applied) {
+      warnings.push(
+        `n (${fit.n}) ≤ k (${fit.k}); HC1 finite-sample correction not applied — CIs may be slightly narrow.`,
+      );
+    }
+    if (fit.ridgeFallback) {
+      warnings.push(
+        "XᵀX was ill-conditioned; sandwich SEs computed using the ridged inverse (slightly conservative bias).",
+      );
+    }
+    if (fit.negativeVariance.length) {
+      warnings.push(
+        `Sandwich diagonal had ${fit.negativeVariance.length} negative entry(ies) beyond floating noise — coerced to 0; treat associated SEs with suspicion.`,
+      );
+    }
   } catch (e) {
     warnings.push(
       `Regression failed: ${e instanceof Error ? e.message : String(e)}. Showing naive estimate only.`,
     );
   }
 
-  const adjRelLift = adjAbsLift / controlMean;
-  const adjRelLiftCi95: [number, number] = [
-    adjAbsLiftCi95[0] / controlMean,
-    adjAbsLiftCi95[1] / controlMean,
-  ];
+  // Convert absolute lift to relative. If control mean is zero or non-finite,
+  // the relative lift is undefined — leave as NaN, the UI renders as "—".
+  const adjRelLift = Number.isFinite(controlMean) ? adjAbsLift / controlMean : NaN;
+  const adjRelLiftCi95: [number, number] = Number.isFinite(controlMean)
+    ? [adjAbsLiftCi95[0] / controlMean, adjAbsLiftCi95[1] / controlMean]
+    : [NaN, NaN];
 
   return {
     channel,
@@ -223,7 +260,9 @@ function analyzeOneChannel(
     nTest,
     nControl,
     droppedNoFeatures: dropped,
-    controlMean,
+    // Pass through whatever we computed (NaN if control mean was zero/missing);
+    // ChannelResult consumers handle NaN appropriately.
+    controlMean: Number.isFinite(controlMean) ? controlMean : 0,
     naiveAbsLift: naive.absLift,
     naiveRelLift: naive.relLift,
     naiveP: naive.p,
@@ -251,15 +290,9 @@ export function analyze(
   if (!channels.size) {
     channelResults.push(analyzeOneChannel(rows, features, featureNames, null));
   } else {
-    // Pooled first, then per-channel
-    channelResults.push(
-      analyzeOneChannel(
-        rows.map((r) => ({ ...r })),
-        features,
-        featureNames,
-        null,
-      ),
-    );
+    // Pooled first, then per-channel. analyzeOneChannel is read-only on rows;
+    // no need to deep-copy.
+    channelResults.push(analyzeOneChannel(rows, features, featureNames, null));
     for (const ch of Array.from(channels).sort()) {
       const subset = rows.filter((r) => r.channel === ch);
       channelResults.push(analyzeOneChannel(subset, features, featureNames, ch));

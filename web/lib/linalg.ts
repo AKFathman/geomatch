@@ -73,12 +73,31 @@ export function addScaled(A: Matrix, B: Matrix, scalar = 1): Matrix {
 }
 
 /**
- * Inverse via Gauss-Jordan with partial pivoting. Returns null on singular.
- * Adequate for our size. Not numerically stable for ill-conditioned matrices —
- * we mitigate by adding ridge regularization at the call site.
+ * Inverse via Gauss-Jordan with partial pivoting. Returns null when the
+ * matrix is (numerically) singular relative to its scale.
+ *
+ * The singular threshold is RELATIVE to the largest absolute entry on the
+ * diagonal — an absolute threshold like 1e-12 is meaningless when the
+ * matrix entries are O(n) (e.g. XᵀX on z-scored features ≈ n on the
+ * diagonal), and would let extremely ill-conditioned matrices pass through
+ * silently. The relative threshold catches cases where the matrix is
+ * effectively singular even at large absolute pivot magnitudes.
+ *
+ * Not designed for ill-conditioned matrices generally — we mitigate by
+ * adding ridge regularization at the call site.
  */
 export function inv(A: Matrix): Matrix | null {
   const n = A.length;
+
+  // Determine scale for relative singular threshold from the original diagonal
+  let maxAbsDiag = 0;
+  for (let i = 0; i < n; i++) {
+    const v = Math.abs(A[i][i]);
+    if (v > maxAbsDiag) maxAbsDiag = v;
+  }
+  const SINGULAR_REL_TOL = 1e-10;
+  const singularThreshold = Math.max(1e-12, SINGULAR_REL_TOL * maxAbsDiag);
+
   // Augmented [A | I]
   const M = A.map((row, i) => {
     const out = row.slice();
@@ -97,18 +116,18 @@ export function inv(A: Matrix): Matrix | null {
         pivot = r;
       }
     }
-    if (pivotVal < 1e-12) return null; // singular
+    if (pivotVal < singularThreshold) return null; // singular relative to matrix scale
     if (pivot !== i) [M[i], M[pivot]] = [M[pivot], M[i]];
 
     // Scale row to make pivot 1
-    const inv = 1 / M[i][i];
-    for (let j = 0; j < 2 * n; j++) M[i][j] *= inv;
+    const invPivot = 1 / M[i][i];
+    for (let j = 0; j < 2 * n; j++) M[i][j] *= invPivot;
 
     // Eliminate column i from all other rows
     for (let r = 0; r < n; r++) {
       if (r === i) continue;
       const factor = M[r][i];
-      if (factor === 0) continue;
+      if (Math.abs(factor) < 1e-14) continue; // skip ~zero factors (avoids redundant work)
       for (let j = 0; j < 2 * n; j++) M[r][j] -= factor * M[i][j];
     }
   }

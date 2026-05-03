@@ -81,7 +81,14 @@ function ChannelCard({ result }: { result: ChannelResult }) {
             {adjustmentMagnitude.toFixed(1)}pp
           </div>
           <div className="text-xs text-neutral-500">
-            R² = {result.r2.toFixed(3)} on covariates
+            {/* Ridge can produce negative R² when the regression doesn't beat the
+                grand mean. Clamp to 0 for display; the warning surfaces below. */}
+            R² = {Math.max(0, result.r2).toFixed(3)} on covariates
+            {result.r2 < 0 && (
+              <span className="ml-1 text-amber-600" title={`Raw R² = ${result.r2.toFixed(3)} — ridge over-shrunk for this fit`}>
+                (over-shrunk)
+              </span>
+            )}
           </div>
         </div>
       </div>

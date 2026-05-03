@@ -38,6 +38,9 @@ export interface CsvError {
 const REQUIRED = ["fips", "group", "outcome"] as const;
 const OPTIONAL = ["period", "channel", "exposures"] as const;
 
+/** Hard cap on parsed rows to prevent tab-OOM from a hostile or malformed CSV. */
+const MAX_ROWS = 100_000;
+
 export function parseCsv(text: string): { ok: true; data: ParsedCsv } | { ok: false; error: CsvError } {
   const result = Papa.parse<Record<string, string>>(text, {
     header: true,
@@ -71,6 +74,14 @@ export function parseCsv(text: string): { ok: true; data: ParsedCsv } | { ok: fa
   const rows: RawRow[] = [];
   let badGroup = 0;
   let badOutcome = 0;
+  let badExposures = 0;
+
+  if (result.data.length > MAX_ROWS) {
+    warnings.push(
+      `CSV had ${result.data.length.toLocaleString()} rows; truncated to first ${MAX_ROWS.toLocaleString()}.`,
+    );
+    result.data.length = MAX_ROWS;
+  }
 
   for (const r of result.data) {
     const fipsRaw = (r.fips ?? "").trim();
@@ -94,7 +105,19 @@ export function parseCsv(text: string): { ok: true; data: ParsedCsv } | { ok: fa
       continue;
     }
 
-    const exp = r.exposures !== undefined && r.exposures !== "" ? Number(r.exposures) : undefined;
+    let exposures: number | undefined;
+    if (r.exposures !== undefined && r.exposures !== "") {
+      const expRaw = Number(r.exposures);
+      // Reject negative or non-finite exposures — rate = outcome/exposures with
+      // a negative denominator would silently flip the sign of the lift.
+      if (Number.isFinite(expRaw) && expRaw > 0) {
+        exposures = expRaw;
+      } else {
+        badExposures++;
+        // Don't drop the row — just treat exposures as absent (use raw outcome)
+      }
+    }
+
     const channel = (r.channel ?? "").trim() || undefined;
     const period = (r.period ?? "").trim() || undefined;
 
@@ -102,7 +125,7 @@ export function parseCsv(text: string): { ok: true; data: ParsedCsv } | { ok: fa
       fips,
       group,
       outcome,
-      exposures: exp !== undefined && Number.isFinite(exp) ? exp : undefined,
+      exposures,
       channel,
       period,
     });
@@ -110,6 +133,7 @@ export function parseCsv(text: string): { ok: true; data: ParsedCsv } | { ok: fa
 
   if (badGroup) warnings.push(`Skipped ${badGroup} rows with unrecognized 'group' value (expected: test/control)`);
   if (badOutcome) warnings.push(`Skipped ${badOutcome} rows with non-numeric 'outcome'`);
+  if (badExposures) warnings.push(`Treated ${badExposures} rows as missing 'exposures' (non-positive or non-finite values)`);
   if (!rows.length) {
     return { ok: false, error: { message: "No valid rows found after parsing", detail: warnings.join("; ") } };
   }

@@ -116,6 +116,20 @@ def fetch(county_fips: list[str]) -> pd.DataFrame:
             "check series ID format (should be LAUCN+5fips+8zeros+2measure = 20 chars)"
         )
     df = pd.DataFrame(rows)
-    log.info("LAUS: %d observations across %d series", len(df), len(series_ids))
+
+    # Partial-success guard: BLS may recognize fewer series IDs than we sent and
+    # silently return them as zero-data. Compare unique fips coverage to what we
+    # asked for; warn if we lost more than 5% of counties.
+    asked = len(county_fips)
+    got = df["fips"].nunique()
+    coverage = got / asked if asked else 0
+    log.info("LAUS: %d observations / %d unique counties (asked for %d, %.1f%% coverage)",
+             len(df), got, asked, coverage * 100)
+    if coverage < 0.95:
+        log.warning(
+            "LAUS coverage is %.1f%% (%d / %d counties) — BLS dropped %d counties silently",
+            coverage * 100, got, asked, asked - got,
+        )
+
     write_long(df, "laus")
     return df

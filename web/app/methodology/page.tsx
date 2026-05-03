@@ -61,6 +61,17 @@ export default function MethodologyPage() {
             commits an updated parquet to <code>web/public/data/</code> — which Vercel
             then deploys to the CDN.
           </p>
+          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100">
+            <strong>Time-axis caveat:</strong> the <code>__level</code> features are
+            taken at each source&apos;s most-recent available year — ACS at 2022,
+            BLS LAUS at the latest monthly observation, BEA at 2023, Zillow at the
+            latest month. The level snapshot is therefore not a coherent point-in-time
+            view: it&apos;s a most-recent-each composite. For the matcher this is
+            generally fine (you want the freshest signal). For the analyzer&apos;s
+            regression, mixing 2022 income with 2025 unemployment as covariates means
+            they&apos;re not on the same time axis, but as long as both are
+            predictive of the outcome, this still buys variance reduction.
+          </div>
           <table className="w-full text-xs">
             <thead className="border-b border-neutral-200 text-left dark:border-neutral-800">
               <tr>
@@ -272,17 +283,27 @@ export default function MethodologyPage() {
               you have. The intercept column is not penalized.
             </li>
             <li>
-              <strong>Sandwich (heteroskedasticity-robust) SEs</strong>. The classical
-              SE assumes homoskedastic errors, which is unrealistic for geo data —
-              variance scales with population, market size, etc. We use Huber-White:
+              <strong>Sandwich (heteroskedasticity-robust) SEs with HC1 correction</strong>.
+              The classical SE assumes homoskedastic errors, which is unrealistic for
+              geo data — variance scales with population, market size, etc. We use
+              Huber-White with a finite-sample (HC1) correction:
               <pre className="mt-2 overflow-x-auto rounded-md bg-neutral-100 p-3 font-mono text-xs dark:bg-neutral-900">
-{`V = (XᵀX)⁻¹ · Xᵀ diag(ε²) X · (XᵀX)⁻¹
+{`V = (n / (n − k)) · (XᵀX)⁻¹ · Xᵀ diag(ε²) X · (XᵀX)⁻¹
 where ε = y − Xβ
 SE_j = √(V_jj)`}
               </pre>
+              The <code>n / (n − k)</code> factor matters in our regime: HC0 (no
+              correction) is downward-biased by ~2× when n ≈ k = 30, which would
+              yield CIs and p-values that look more confident than they should. HC1
+              removes that bias.
+              <br />
               For the inference matrix we use the unregularized{" "}
-              <code>(XᵀX)⁻¹</code> when invertible, falling back to the ridged version
-              otherwise.
+              <code>(XᵀX)⁻¹</code> when well-conditioned (relative-tolerance singular
+              check). If ill-conditioned, we fall back to the ridged version and{" "}
+              <em>flag</em> the result as <code>ridgeFallback</code> so the UI shows
+              a warning. When n ≤ k the HC1 correction can&apos;t apply (we&apos;d
+              divide by zero or negative); the fit returns <code>hc1Applied = false</code>
+              {" "}and the UI also surfaces that.
             </li>
             <li>
               <strong>Inference</strong>. <code>z = β / SE</code>; two-sided p-value
@@ -400,7 +421,16 @@ SE_j = √(V_jj)`}
             <li>
               <strong>No t-distribution</strong> — we use the standard-normal CDF for
               p-values. Fine for n &gt; ~30 per group; a touch optimistic at very small
-              samples.
+              samples (the sandwich estimator itself is only large-sample valid, so a
+              t-quantile would be a partial fix at best).
+            </li>
+            <li>
+              <strong>Negative R² is possible</strong> — when ridge over-shrinks for
+              your particular fit (large λ, weak signal), R² can go below 0. The UI
+              clamps the displayed value at 0 and labels it &ldquo;over-shrunk&rdquo;
+              so it&apos;s visible. The lift estimate itself is still valid; the R² is
+              just a goodness-of-fit indicator on the covariates, not on the
+              treatment effect.
             </li>
             <li>
               <strong>Approximate delta method for % CIs</strong> — we divide the β CI
