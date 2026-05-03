@@ -108,8 +108,9 @@ export function CsvUpload({
           <p className="mt-3 text-xs text-neutral-500">Loaded: {filename}</p>
         )}
         <p className="mt-2 text-xs text-neutral-500">
-          Sample: 25 test + 25 control counties, deliberately skewed (test = top-40 by pop,
-          control = pop rank 41–120). True lift: <strong>+15% on meta</strong>, <strong>+3% on tiktok</strong>.{" "}
+          Sample: 60 test + 60 control counties × 6 channels = 720 rows, deliberately
+          skewed (test = top-80 by pop, control = pop rank 81–220). True lifts span{" "}
+          <strong>−1% (snap)</strong> to <strong>+25% (google_search)</strong>.{" "}
           <a
             href={SAMPLE_URL}
             download

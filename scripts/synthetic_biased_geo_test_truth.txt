@@ -1,32 +1,41 @@
 Synthetic biased geo-test — ground truth
-==================================================
-N test cells:    25
-N control cells: 25
-Channels:        meta, tiktok
-Test pool:       counties ranked #1–40 by pop
-Control pool:    counties ranked #41–120 by pop
+============================================================
+Total rows:      720  (720 = 120 counties × 6 channels)
+N test cells:    60
+N control cells: 60
+Test pool:       counties ranked #1–80 by pop
+Control pool:    counties ranked #81–220 by pop
 
-True multiplicative lifts (test arm only):
-  meta      +15.0%
-  tiktok    +3.0%
+True multiplicative lifts per channel (test arm only):
+  google_search   +25.0%   (baseline ~1.20%, exposure share ~20%)
+  meta            +15.0%   (baseline ~0.40%, exposure share ~55%)
+  ctv             +12.0%   (baseline ~0.20%, exposure share ~30%)
+  youtube         +8.0%   (baseline ~0.30%, exposure share ~50%)
+  tiktok          +3.0%   (baseline ~0.25%, exposure share ~40%)
+  snap            -1.0%   (baseline ~0.15%, exposure share ~18%)
 
 Expected analyzer behaviour:
-  - Naive lift (raw): biased UP because test cells are larger / denser /
-    wealthier and have a structurally higher baseline rate.
-  - Adjusted lift: should recover ~15% on meta and ~3% on tiktok with
-    95% CIs containing the truth.
-  - Selection diagnostic: large positive Δ on income, education, population,
-    home values for test vs control.
+  - Naive lift (raw): biased UP across all channels because test cells
+    are larger / denser / wealthier and have a structurally higher baseline rate.
+  - Adjusted lift: should recover values close to the true lifts,
+    with 95% CIs that contain the truth on most channels.
+  - snap should NOT show a significant adjusted lift (true effect is ~0,
+    so the CI should straddle zero).
+  - tiktok adjusted lift may be marginal — small true effect (3%)
+    relative to noise; whether it lands as 'significant' depends on
+    the noise realisation but it should be small either way.
+  - Selection diagnostic should flag large positive Δ on income, education,
+    population, home values, broadband, etc. for test vs control.
 
 Test counties (sample of 5):
-  12099  Palm Beach County, Florida  pop=1,494,805
-  39049  Franklin County, Ohio  pop=1,318,149
   36059  Nassau County, New York  pop=1,389,160
-  36103  Suffolk County, New York  pop=1,524,486
-  48201  Harris County, Texas  pop=4,726,177
+  06037  Los Angeles County, California  pop=9,936,690
+  09110  Capitol Planning Region, Connecticut  pop=977,165
+  06111  Ventura County, California  pop=842,009
+  25027  Worcester County, Massachusetts  pop=858,898
 Control counties (sample of 5):
-  47157  Shelby County, Tennessee  pop=926,440
-  40143  Tulsa County, Oklahoma  pop=668,923
-  08041  El Paso County, Colorado  pop=730,323
-  42017  Bucks County, Pennsylvania  pop=645,163
-  08031  Denver County, Colorado  pop=710,800
+  39113  Montgomery County, Ohio  pop=536,121
+  39095  Lucas County, Ohio  pop=430,014
+  09170  South Central Connecticut Planning Region, Connecticut  pop=571,298
+  04021  Pinal County, Arizona  pop=433,338
+  17089  Kane County, Illinois  pop=517,254
