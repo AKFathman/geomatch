@@ -320,12 +320,104 @@ SE_j = √(V_jj)`}
               is small relative to β variance at typical sample sizes.)
             </li>
             <li>
+              <strong>Doubly-robust (AIPW) estimate</strong> — see the next subsection.
+              Computed alongside the adjusted estimate; UI shows both with the
+              DR result as the headline when available.
+            </li>
+            <li>
               <strong>Selection diagnostic</strong>. For every level feature: Welch&apos;s
               t-test of test mean vs control mean, in z-score units. Sorted by{" "}
               <code>|Δ|</code>, top 8 shown. Large Δs are exactly what the regression
               adjusted for.
             </li>
           </ol>
+
+          <h3 className="mt-6 text-base font-semibold">
+            Doubly-robust (AIPW) estimator
+          </h3>
+          <p>
+            The adjusted estimate above relies entirely on the regression&apos;s
+            ability to capture the right functional form. If the relationship
+            between covariates and outcome is wildly nonlinear, regression
+            adjustment can still be biased.
+          </p>
+          <p>
+            The doubly-robust estimator combines two models — an{" "}
+            <em>outcome</em> model (predicting Y from covariates) and a{" "}
+            <em>propensity</em> model (predicting treatment assignment from
+            covariates) — using the augmented inverse-propensity-weighted (AIPW)
+            formula. Its key property: it&apos;s consistent if{" "}
+            <strong>either</strong> model is correctly specified — you only need
+            one to be right.
+          </p>
+          <pre className="overflow-x-auto rounded-md bg-neutral-100 p-3 font-mono text-xs dark:bg-neutral-900">
+{`τ̂_AIPW = (1/n) · Σ ψ_i
+
+ψ_i = μ̂₁(x_i) − μ̂₀(x_i)
+     + T_i · (Y_i − μ̂₁(x_i)) / ê(x_i)
+     − (1 − T_i) · (Y_i − μ̂₀(x_i)) / (1 − ê(x_i))
+
+where:
+  ê(x)  = P(T=1 | X=x), fit via ridge logistic regression (IRLS)
+  μ̂₀(x) = outcome model on control rows (ridge regression)
+  μ̂₁(x) = outcome model on treated rows (ridge regression)
+
+Variance via influence function:
+  Var(τ̂) = (1/n²) · Σ (ψ_i − τ̂)²
+  SE = √Var`}
+          </pre>
+          <p>
+            <strong>Practical caveats</strong>:
+          </p>
+          <ul className="list-disc pl-6">
+            <li>
+              <strong>Propensity trimming</strong> — extreme{" "}
+              <code>ê(x_i)</code> close to 0 or 1 makes the IPW correction
+              explode. We clip to <code>[0.05, 0.95]</code> by default and
+              surface the trim count in the diagnostics. If a large fraction of
+              observations were trimmed, test/control don&apos;t overlap well on
+              covariates and DR may be unreliable.
+            </li>
+            <li>
+              <strong>Two outcome models</strong> require ≥3 obs per arm. With
+              the typical ridge λ scaling we use, the outcome models stay
+              stable down to n ≈ 10 per arm but become biased toward zero
+              treatment-effect heterogeneity. For most geo tests that&apos;s
+              fine — treatment effect is usually homogeneous across markets.
+            </li>
+            <li>
+              <strong>Convergence</strong> — the logistic fit uses Newton-Raphson
+              with step damping. Failed convergence is reported as a warning. In
+              ridge regime, this is rare (ridge prevents the perfect-separation
+              divergence), but possible when ridge λ is set very low.
+            </li>
+          </ul>
+          <p>
+            <strong>When to trust which estimate</strong>:
+          </p>
+          <ul className="list-disc pl-6">
+            <li>
+              <strong>Naive ≈ Adjusted ≈ DR</strong>: balanced cells, no
+              selection bias. The adjustment isn&apos;t doing much because there
+              wasn&apos;t much to adjust for. All three are valid.
+            </li>
+            <li>
+              <strong>Naive ≠ Adjusted ≈ DR</strong>: there was selection bias,
+              the regression captured it correctly. Trust Adjusted/DR; ignore
+              Naive.
+            </li>
+            <li>
+              <strong>Naive ≠ Adjusted ≠ DR</strong>: the outcome model was
+              probably misspecified and the propensity model is correcting it
+              (or vice versa). Trust DR — that&apos;s exactly the case the
+              double-robustness property protects against.
+            </li>
+            <li>
+              <strong>Heavy trimming or low propensity R²</strong>: poor
+              overlap. Both adjusted and DR are working harder than they should
+              be; widen your test cell selection or expect a wider CI.
+            </li>
+          </ul>
           <h3 className="mt-4 text-base font-semibold">Why ridge?</h3>
           <p>
             Geo tests often have 30–100 observations against ~30 covariates. OLS
@@ -394,13 +486,11 @@ SE_j = √(V_jj)`}
           </p>
           <ul className="list-disc pl-6">
             <li>
-              <strong>No doubly-robust estimator yet</strong> — the analyzer relies
-              entirely on the regression&apos;s ability to capture the right functional
-              form. If the relationship between covariates and outcome is wildly
-              nonlinear, adjustment can still be biased. Phase 2B adds inverse-propensity
-              weighting on top of regression, which gives correct estimates if{" "}
-              <em>either</em> the propensity model <em>or</em> the outcome model is
-              correctly specified.
+              <strong>DR doesn&apos;t fix poor overlap</strong> — when test and
+              control cells have very different covariate distributions, the
+              propensity scores get clipped at the trim bounds and the IPW
+              correction is essentially turned off. The diagnostics surface
+              this; trust the warnings.
             </li>
             <li>
               <strong>No pre-period (DiD)</strong> — we adjust on cross-sectional
@@ -450,12 +540,6 @@ SE_j = √(V_jj)`}
         <Section id="roadmap" title="Roadmap">
           <ul className="list-disc pl-6">
             <li>
-              <strong>Phase 2B</strong> — Doubly-robust estimator: add a logistic
-              propensity model for treatment assignment and combine via the
-              augmented inverse-propensity weighting (AIPW) estimator. Same input
-              CSV, additional adjusted-lift number with stronger guarantees.
-            </li>
-            <li>
               <strong>Phase 2C</strong> — Pre-period support: extend the CSV schema
               with pre-period rows, fit a difference-in-differences specification,
               show pre/post balance.
@@ -492,7 +576,8 @@ SE_j = √(V_jj)`}
             Frontend matcher: web/components/MatcherShell.tsx, web/lib/match.ts
             <br />
             Frontend analyzer: web/components/AnalyzerShell.tsx, web/lib/analyze.ts,
-            web/lib/regression.ts, web/lib/linalg.ts
+            web/lib/regression.ts, web/lib/dr.ts, web/lib/propensity.ts,
+            web/lib/linalg.ts
             <br />
             Synthetic dataset generator: scripts/generate_test_dataset.py
             <br />

@@ -9,17 +9,18 @@
  *   1. Filter to rows whose fips is in the feature matrix
  *   2. Compute outcome variable: outcome/exposures if exposures provided, else outcome
  *   3. Compute naive lift (Welch's t-test on raw outcomes by group)
- *   4. Build design matrix X = [1, treatment, ...level features]
- *   5. Fit ridge regression
- *   6. Pull treatment coefficient + sandwich SE → CI, p-value
- *   7. Convert to relative lift using control mean
- *   8. Selection diagnostic: which features differ most between groups (Welch's t)
+ *   4. Compute adjusted lift (single ridge regression with treatment indicator)
+ *   5. Compute doubly-robust lift (AIPW: separate outcome models + propensity weighting)
+ *   6. Convert all to relative lift using control mean
+ *   7. Selection diagnostic: which features differ most between groups (Welch's t)
  *
  * We use only `__level` features (~25) rather than all 100+ to keep the
  * regression well-conditioned for typical geo-test sizes (50–200 markets).
  * Slopes/YoY/vol are still in the matcher; here we want the level snapshot.
  */
 
+import { fitDr } from "./dr";
+import type { DrResult } from "./dr";
 import { fitRidge, naiveLift } from "./regression";
 import type { RawRow } from "./csv";
 import { twoSidedP } from "./linalg";
@@ -43,6 +44,22 @@ export interface ChannelResult {
   adjSe: number;
   adjP: number;
   r2: number;
+  // Doubly-robust (AIPW: separate outcome models + propensity weighting)
+  drAbsLift: number;
+  drRelLift: number;
+  drAbsLiftCi95: [number, number];
+  drRelLiftCi95: [number, number];
+  drSe: number;
+  drP: number;
+  drDiagnostics: {
+    meanPropensity: number;
+    minPropensity: number;
+    maxPropensity: number;
+    nTrimmed: number;
+    propensityR2: number; // McFadden's pseudo-R²
+    outcomeR2Control: number;
+    outcomeR2Treated: number;
+  } | null;
   // Selection diagnostic
   selection: SelectionDiag[];
   // Warnings
@@ -254,6 +271,70 @@ function analyzeOneChannel(
     ? [adjAbsLiftCi95[0] / controlMean, adjAbsLiftCi95[1] / controlMean]
     : [NaN, NaN];
 
+  // Doubly-robust (AIPW): separate outcome models + propensity weighting.
+  // Consistent if EITHER outcome OR propensity model is correctly specified.
+  let drAbsLift = NaN;
+  let drAbsLiftCi95: [number, number] = [NaN, NaN];
+  let drSe = NaN;
+  let drP = NaN;
+  let drInfo: DrResult["propensityScores"] extends number[] ? Omit<DrResult, "propensityScores" | "warnings"> | null : never;
+  drInfo = null;
+  try {
+    if (nTest >= 3 && nControl >= 3) {
+      // Build feature-only design matrix (no treatment column for DR)
+      const Xfeat: number[][] = kept.map((k) => {
+        const row = [1];
+        for (const f of usedFeatures) {
+          const v = k.vec[f];
+          row.push(Number.isFinite(v) ? v : 0);
+        }
+        return row;
+      });
+      const dr = fitDr(Xfeat, yArr, tArr);
+      drAbsLift = dr.estimate;
+      drAbsLiftCi95 = dr.ci95;
+      drSe = dr.se;
+      drP = dr.p;
+      drInfo = {
+        estimate: dr.estimate,
+        se: dr.se,
+        ci95: dr.ci95,
+        p: dr.p,
+        meanPropensity: dr.meanPropensity,
+        minPropensity: dr.minPropensity,
+        maxPropensity: dr.maxPropensity,
+        nTrimmed: dr.nTrimmed,
+        propensityR2: dr.propensityR2,
+        outcomeR2Control: dr.outcomeR2Control,
+        outcomeR2Treated: dr.outcomeR2Treated,
+      };
+      if (dr.warnings.length) warnings.push(...dr.warnings.map((w) => `[DR] ${w}`));
+    } else {
+      warnings.push("Skipped DR estimate: need ≥3 obs in each arm to fit separate outcome models.");
+    }
+  } catch (e) {
+    warnings.push(
+      `DR estimate failed: ${e instanceof Error ? e.message : String(e)}. Showing naive + adjusted only.`,
+    );
+  }
+  const drRelLift = Number.isFinite(controlMean) ? drAbsLift / controlMean : NaN;
+  const drRelLiftCi95: [number, number] = Number.isFinite(controlMean)
+    ? [drAbsLiftCi95[0] / controlMean, drAbsLiftCi95[1] / controlMean]
+    : [NaN, NaN];
+
+  // Build the trimmed-down drDiagnostics for the result object
+  const drDiagnostics = drInfo
+    ? {
+        meanPropensity: drInfo.meanPropensity,
+        minPropensity: drInfo.minPropensity,
+        maxPropensity: drInfo.maxPropensity,
+        nTrimmed: drInfo.nTrimmed,
+        propensityR2: drInfo.propensityR2,
+        outcomeR2Control: drInfo.outcomeR2Control,
+        outcomeR2Treated: drInfo.outcomeR2Treated,
+      }
+    : null;
+
   return {
     channel,
     n,
@@ -273,6 +354,13 @@ function analyzeOneChannel(
     adjSe,
     adjP,
     r2,
+    drAbsLift,
+    drRelLift,
+    drAbsLiftCi95,
+    drRelLiftCi95,
+    drSe,
+    drP,
+    drDiagnostics,
     selection,
     warnings,
   };
